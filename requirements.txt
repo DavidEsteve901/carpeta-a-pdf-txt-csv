@@ -1,0 +1,1 @@
+fpdf2>=2.7   # Solo si vas a generar PDF
