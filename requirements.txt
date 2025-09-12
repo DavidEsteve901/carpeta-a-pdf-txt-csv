@@ -1,1 +1,8 @@
-fpdf2>=2.7   # Solo si vas a generar PDF
+# Requerido para la exportación a PDF
+fpdf2>=2.7
+
+# Requerido para el tema visual moderno (claro/oscuro)
+sv-ttk>=1.0
+
+# Requerido para la funcionalidad de arrastrar y soltar (Drag & Drop)
+tkinterdnd2>=0.3

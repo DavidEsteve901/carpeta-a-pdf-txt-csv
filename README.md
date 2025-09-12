@@ -1,100 +1,112 @@
-# Convertidor universal (PDF / TXT / CSV)
 
-> Herramienta de escritorio en **Python 3** que escanea cualquier carpeta y genera un único archivo PDF, TXT o CSV con el contenido de *todos* sus ficheros.
->
-> * Sin dependencias gráficas externas: interfaz **Tkinter** incluida en la instalación estándar de Python.
-> * Exportación opcional a **PDF** gracias a la librería [fpdf2](https://pypi.org/project/fpdf2/).
-> * Compatible con Windows, macOS y Linux.
+# Convertidor Universal Pro (PDF / TXT / CSV)
+
+> Herramienta de escritorio moderna en **Python 3** que escanea cualquier carpeta y genera un único archivo PDF, TXT o CSV con el contenido de *todos* sus ficheros.
+
+Diseñada para ser potente y agradable de usar, esta versión incluye una **interfaz gráfica moderna** con temas claro/oscuro, soporte para **arrastrar y soltar**, una barra de progreso en tiempo real y mucho más.
+
+*   **GUI Moderna**: Interfaz limpia y profesional gracias a `sv-ttk`.
+*   **Modo Claro y Oscuro**: Cambia de tema al instante con un solo clic.
+*   **Arrastrar y Soltar**: Selecciona carpetas simplemente arrastrándolas a la ventana.
+*   **Feedback Visual**: Una barra de progreso te mantiene informado durante conversiones largas.
+*   **Multiplataforma**: Compatible con Windows, macOS y Linux.
+*   **Exportación a PDF**: Gracias a la potente librería [fpdf2](https://pypi.org/project/fpdf2/).
 
 ---
 
-## 📦 Instalación
+## 📦 Instalación
 
 ```bash
 # Clona el repositorio
 $ git clone https://github.com/<TU_USUARIO>/convertidor-universal.git
 $ cd convertidor-universal
 
-# (Opcional) Crea un entorno virtual
+# (Recomendado) Crea un entorno virtual
 $ python -m venv .venv
 $ source .venv/bin/activate  # en Windows: .venv\Scripts\activate
 
-# Instala dependencias
-$ python -m pip install -r requirements.txt  # sólo fpdf2 si quieres PDF
+# Instala todas las dependencias
+$ python -m pip install -r requirements.txt
 ```
 
-> **Nota:** Tkinter ya viene incluido con la mayoría de instaladores de Python. Si tu distribución de Linux lo separa, instala el paquete `python3-tk` desde tu gestor de paquetes.
+> **Nota:** Tkinter ya viene incluido con la mayoría de instaladores de Python. Si tu distribución de Linux lo separa, instala el paquete `python3-tk` desde tu gestor de paquetes (ej: `sudo apt-get install python3-tk`).
 
 ---
 
-## 🚀 Uso rápido
+## 🚀 Uso rápido
 
 ```bash
-$ python convertidor_gui.py
+$ python convertidor_gui_pro.py  # o el nombre que le hayas dado al script
 ```
 
-1. **Selecciona la carpeta** que contiene los archivos a convertir.
-2. Escribe el **nombre de salida** (sin extensión).
-3. Elige el **formato** de exportación (pdf, txt o csv).
-4. Pulsa **Convertir**.
+1.  **Selecciona la carpeta** usando el botón "Examinar" o simplemente **arrastrándola y soltándola** sobre la ventana.
+2.  Escribe el **nombre de salida** (sin extensión).
+3.  Elige el **formato** de exportación (PDF, TXT o CSV).
+4.  (Opcional) Usa el interruptor superior para cambiar entre **modo claro y oscuro**.
+5.  Pulsa **Convertir**.
 
-Se creará `NOMBRE_SALIDA.<ext>` en el mismo directorio donde ejecutes el programa.
+El archivo generado aparecerá en el mismo directorio donde ejecutes el programa. Un nuevo botón te permitirá **abrir la carpeta de salida** directamente.
 
-![Captura de pantalla](docs/screenshot.png)
+<!-- TODO: Reemplazar con una captura de la nueva interfaz Pro -->
+![Captura de pantalla](docs/screenshot-pro.png)
 
 ---
 
-## 🏗️ Construir un ejecutable (Windows)
+## 🏗️ Construir un ejecutable (Windows)
+
+Para empaquetar la aplicación en un único archivo `.exe`, necesitas `pyinstaller` y asegurarte de que los recursos visuales de `sv-ttk` se incluyan correctamente.
 
 ```bash
+# 1. Instala PyInstaller
 $ python -m pip install pyinstaller
-$ pyinstaller --onefile --noconsole convertidor_gui.py
 
-# El ejecutable aparecerá en dist/convertidor_gui.exe
-```
+# 2. Encuentra la ruta de los temas de sv-ttk
+#    Ejecuta este comando y copia la ruta que te muestra
+$ python -c "import sv_ttk; print(sv_ttk.get_theme_root())"
 
-Para conservar la ventana de consola (útil al depurar), omite `--noconsole`.
+# 3. Construye el ejecutable (reemplaza <RUTA_A_LOS_TEMAS> por la que copiaste)
+#    En Windows, la ruta podría necesitar comillas y usar `\` como separador.
+$ pyinstaller --onefile --noconsole --add-data "<RUTA_A_LOS_TEMAS>;sv_ttk/theme" convertidor_gui_pro.py```
+
+*   **Ejemplo del comando final en Windows:**
+    `pyinstaller --onefile --noconsole --add-data "C:\Users\TuUser\.venv\Lib\site-packages\sv_ttk\theme;sv_ttk/theme" convertidor_gui_pro.py`
+
+El ejecutable final aparecerá en la carpeta `dist/`.
 
 ---
 
-## 📜 requirements.txt
-
-```
-fpdf2>=2.7   # Solo si vas a generar PDF
-```
-
----
-
-## 🗃️ Estructura del proyecto
+## 🗃️ Estructura del proyecto
 
 ```
 convertidor-universal/
-├── convertidor_gui.py   # Script principal con interfaz Tkinter
-├── README.md            # Este documento
-├── requirements.txt     # Dependencias (solo fpdf2)
+├── convertidor_gui_pro.py  # Script principal con la nueva interfaz
+├── README.md               # Este documento
+├── requirements.txt        # Dependencias del proyecto
 └── docs/
-    └── screenshot.png   # (opcional) imágenes para el README
+    └── screenshot-pro.png  # (opcional) captura de la nueva interfaz
 ```
 
 ---
 
-## 📝 Licencia
+## 📝 Licencia
 
-Distribuido bajo licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más información.
-
----
-
-## 🙌 Créditos
-
-* **fpdf2** – generación de PDF.
-* Icono por [Font Awesome](https://fontawesome.com/).
+Distribuido bajo licencia MIT.
 
 ---
 
-## ⭐ Cómo contribuir
+## 🙌 Créditos
 
-1. Haz un *fork* del proyecto.
-2. Crea una rama (`git checkout -b feature/nueva-feature`).
-3. Realiza tus cambios y haz *commit* (`git commit -m 'Añadir nueva feature'`).
-4. *Push* a la rama (`git push origin feature/nueva-feature`).
-5. Abre un *Pull Request*.
+*   **fpdf2**: Para la generación de archivos PDF.
+*   **sv-ttk**: Para los excelentes temas visuales modernos.
+*   **tkinterdnd2**: Para la funcionalidad de arrastrar y soltar.
+*   **Iconos**: Por [Font Awesome](https://fontawesome.com/).
+
+---
+
+## ⭐ Cómo contribuir
+
+1.  Haz un *fork* del proyecto.
+2.  Crea una rama (`git checkout -b feature/nueva-feature`).
+3.  Realiza tus cambios y haz *commit* (`git commit -m 'Añadir nueva feature'`).
+4.  *Push* a la rama (`git push origin feature/nueva-feature`).
+5.  Abre un *Pull Request*.
