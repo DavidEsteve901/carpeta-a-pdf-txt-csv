@@ -84,16 +84,72 @@ def _tree_txt(nodo: dict, indent: int = 0):
             yield " " * indent + f"[{k}]/"
             yield from _tree_txt(v, indent + 4)
 
-def export_txt(output: Path, arbol: dict, files: list[tuple[Path, list[str]]], log_queue: queue.Queue):
+def export_txt(
+    output: Path,
+    arbol: dict,
+    files: list[tuple[Path, list[str]]],
+    ext_filter: tuple[set[str], set[str]] | None,
+    log_queue: queue.Queue
+):
     log_queue.put("-> Generando archivo TXT...")
     total = len(files)
+
+    def should_convert(rel_path: Path) -> bool:
+        if ext_filter is None:
+            return True
+        includes, excludes = ext_filter
+        ext = rel_path.suffix.lower()
+        # Si hay inclusiones, solo pasan las incluidas
+        if includes and ext not in includes:
+            return False
+        # En cualquier caso, excluidas nunca pasan
+        if ext in excludes:
+            return False
+        return True
+
     with output.open("w", encoding="utf-8") as fh:
         fh.write("# Árbol de archivos\n" + "\n".join(_tree_txt(arbol)) + "\n\n# Contenido de archivos\n\n")
         for i, (rel_path, lines) in enumerate(files):
             if i % 50 == 0:
                 log_queue.put(('progress', 20 + (i / max(1, total)) * 80))
-            fh.write(f"## {rel_path}\n{''.join(lines)}\n")
+            if should_convert(rel_path):
+                fh.write(f"## {rel_path}\n{''.join(lines)}\n")
+            else:
+                fh.write(f"## {rel_path} [no convertido]\n")
     log_queue.put("-> Archivo TXT generado.")
+
+
+def parse_exts(spec: str) -> tuple[set[str], set[str]] | None:
+    """
+    Devuelve:
+      None                  -> convertir todo
+      (includes, excludes)  -> conjuntos normalizados de extensiones
+    Reglas:
+      - Inclusión:   .py,.md           (sin '!')
+      - Exclusión:   !pdf,!jpg         (con '!')
+      - Mixto:       .py,.md,!pdf      (incluye solo .py/.md y además excluye .pdf)
+      - Todo:        *                 (o vacío)
+    """
+    if not spec or spec.strip() in {"*", "todos", "TODOS"}:
+        return None
+
+    inc: set[str] = set()
+    exc: set[str] = set()
+    parts = [p.strip() for p in spec.split(",") if p.strip()]
+    for p in parts:
+        if p.startswith("!"):
+            ext = "." + p[1:].lstrip(".").lower()
+            exc.add(ext)
+        else:
+            ext = "." + p.lstrip(".").lower()
+            inc.add(ext)
+
+    if not inc and not exc:
+        return None
+    return (inc, exc)
+
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CLASE CheckTreeDialog (VERSIÓN FINAL)
@@ -340,6 +396,8 @@ class ConvertidorGUI:
         self.output_name = StringVar(value="listado")
         self.format_var = IntVar(value=1)
         self.theme_var = tk.StringVar(value="dark")
+        self.preset_var = StringVar(value="* (Todo)")
+        self.exts_var = StringVar(value="*")  # editable por el usuario
         self.selected_paths: set[Path] = set()
         self.last_output_path: Path | None = None
         self.log_queue = queue.Queue()
@@ -416,6 +474,65 @@ class ConvertidorGUI:
         self.lbl_sel = ttk.Label(sel_group, text="(Actualmente: todo)")
         self.lbl_sel.pack(side="left", padx=8)
 
+        exts_group = ttk.LabelFrame(settings_frame, text="Filtros de conversión", padding=10)
+        exts_group.grid(row=2, column=0, sticky="ew", pady=(5, 0))
+        exts_group.columnconfigure(1, weight=1)
+
+        # Presets
+        ttk.Label(exts_group, text="Preset:").grid(row=0, column=0, sticky="w")
+        self.cmb_presets = ttk.Combobox(
+            exts_group,
+            textvariable=self.preset_var,
+            values=[
+                "* (Todo)",
+                ".md,.txt (Markdown/Texto)",
+                ".py,.ts,.js (Código típico)",
+                ".c,.cpp,.h (C/C++)",
+                ".java,.kt (JVM)",
+                ".json,.yml,.yaml,.toml (Config)",
+                ".sh,.ps1,.bat (Scripts)",
+                ".tex,.bib (LaTeX)",
+
+                # EXCLUSIONES (todo excepto…)
+                "!pdf (Todo excepto PDF)",
+                "!pdf,!jpg,!jpeg,!png,!gif (Todo excepto imágenes y PDF)",
+                "!mp3,!wav,!flac (Todo excepto audio)",
+                "!mp4,!mkv,!avi (Todo excepto vídeo)",
+                "!zip,!rar,!7z,!tar,!gz (Todo excepto comprimidos)",
+
+                # MIXTOS (incluye solo X e, además, excluye Y)
+                ".py,.md,!pdf (Código/MD sin PDF)",
+                ".ipynb,.py,!png,!jpg (Notebooks + Py, sin imágenes)",
+                ".json,.yml,.yaml,!lock (Configs, excluye *lock)",
+            ],
+            state="readonly",
+        )
+        self.cmb_presets.grid(row=0, column=1, sticky="ew", padx=(5, 10))
+
+        # Campo editable (si no está en la lista, el usuario lo escribe)
+        ttk.Label(exts_group, text="Extensiones a convertir:").grid(row=1, column=0, sticky="w", pady=(6,0))
+        entry_frame = ttk.Frame(exts_group)
+        entry_frame.grid(row=1, column=1, sticky="ew", padx=(5, 10), pady=(6,0))
+        entry_frame.columnconfigure(0, weight=1)
+
+        self.entry_exts = ttk.Entry(entry_frame, textvariable=self.exts_var)
+        self.entry_exts.grid(row=0, column=0, sticky="ew")
+
+        # Botón de ayuda que abre modal
+        self.btn_exts_help = ttk.Button(entry_frame, text="ℹ️", width=3, command=self._show_exts_help)
+        self.btn_exts_help.grid(row=0, column=1, padx=(6,0))
+
+        # Pista corta (opcional) a la derecha
+        ttk.Label(exts_group, text="Ej.: *, .py,.md  |  !pdf  |  .py,.md,!pdf").grid(
+            row=1, column=2, sticky="w", pady=(6,0)
+        )
+
+
+
+        # Vincular cambio de preset
+        self.cmb_presets.bind("<<ComboboxSelected>>", lambda e: self._on_preset_change())
+
+
         action_frame = ttk.Frame(self.root, padding=(10, 5))
         action_frame.grid(row=2, column=0, sticky="ew")
         action_frame.columnconfigure(0, weight=1)
@@ -448,6 +565,62 @@ class ConvertidorGUI:
             self.selected_paths = set()
             self._update_sel_label()
             self._save_config()
+
+    def _on_preset_change(self):
+        # Toma SOLO la parte antes del paréntesis (si lo hay)
+        raw = self.preset_var.get()
+        expr = raw.split(" (", 1)[0].strip()
+        self.exts_var.set(expr)
+        self._save_config()
+
+    def _show_exts_help(self):
+        help_text = (
+            "Formato del filtro de extensiones:\n\n"
+            "• Inclusión: .py,.md\n"
+            "    Convierte SOLO esas extensiones.\n\n"
+            "• Exclusión: !pdf,!jpg\n"
+            "    Convierte TODO excepto esas extensiones.\n\n"
+            "• Mixto: .py,.md,!pdf\n"
+            "    Convierte solo .py/.md y, además, excluye .pdf.\n\n"
+            "• Todo: *\n"
+            "    Convierte todas las extensiones.\n\n"
+            "Ejemplos útiles:\n"
+            "  - !pdf,!jpg,!png              → Todo excepto imágenes/PDF\n"
+            "  - .json,.yml,.yaml,!lock      → Configs, excluye archivos *lock\n"
+            "  - .ipynb,.py,!png,!jpg        → Notebooks + Py, sin imágenes"
+        )
+
+        win = tk.Toplevel(self.root)
+        win.title("Ayuda: Filtro de extensiones")
+        win.transient(self.root)          # flotante sobre la ventana principal
+        win.grab_set()                    # modal
+        win.resizable(False, False)
+
+        # tamaño/posicionado cómodo
+        pad = 14
+        frm = ttk.Frame(win, padding=pad)
+        frm.grid(sticky="nsew")
+        frm.columnconfigure(0, weight=1)
+
+        lbl = ttk.Label(frm, text=help_text, justify="left", wraplength=460)
+        lbl.grid(row=0, column=0, sticky="w")
+
+        btn = ttk.Button(frm, text="Cerrar", command=win.destroy, style="Accent.TButton")
+        btn.grid(row=1, column=0, sticky="e", pady=(pad//2, 0))
+
+        # Cerrar con ESC y Enter
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<Return>", lambda e: win.destroy())
+
+        # centrar sobre la ventana principal
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - win.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_height()) // 3
+        win.geometry(f"+{max(x,0)}+{max(y,0)}")
+
+        # foco al botón
+        btn.focus_set()
+
             
     def _open_selector(self):
         base_str = self.project_path.get()
@@ -504,7 +677,8 @@ class ConvertidorGUI:
             name = self.output_name.get().strip() or "listado"
             fmt_idx = self.format_var.get()
             fmt = ("pdf", "txt", "csv")[fmt_idx]
-            output_path = Path.cwd() / f"{name}.{fmt}"
+            script_dir = Path(__file__).parent.resolve()
+            output_path = script_dir / f"{name}.{fmt}"
             self.last_output_path = output_path
 
             self.log_queue.put(f"📂 Carpeta de origen: {base}")
@@ -516,12 +690,15 @@ class ConvertidorGUI:
                 self.log_queue.put(("final_message", "showwarning", "No se encontraron archivos para convertir."))
                 return
 
+            # 👇 Nuevo: parsear extensiones
+            allowed_exts = parse_exts(self.exts_var.get())  
+
             if fmt == "txt":
-                export_txt(output_path, arbol, files, self.log_queue)
+                export_txt(output_path, arbol, files, allowed_exts, self.log_queue) 
             else:
                 self.log_queue.put(f"AVISO: La exportación a {fmt.upper()} no está implementada.")
                 self.log_queue.put("-> Generando un archivo TXT de respaldo.")
-                export_txt(output_path.with_suffix(".txt"), arbol, files, self.log_queue)
+                export_txt(output_path.with_suffix(".txt"), arbol, files, allowed_exts, self.log_queue)  
 
             self.log_queue.put(('progress', 100))
             self.log_queue.put("─" * 60)
@@ -532,6 +709,7 @@ class ConvertidorGUI:
             self.log_queue.put(("final_message", "showerror", f"❌ ERROR INESPERADO: {exc}"))
         finally:
             self.log_queue.put("END_PROCESS")
+
 
     def _process_log_queue(self):
         try:
@@ -585,6 +763,11 @@ class ConvertidorGUI:
                     self.theme_var.set(theme)
                     sv_ttk.set_theme(theme)
                     self._log(f"Tema '{theme}' cargado.")
+                    exts = config.get("exts", "*")
+                    self.exts_var.set(exts)
+
+                    preset = config.get("preset", "* (Todo)")
+                    self.preset_var.set(preset)
             else:
                 # Si no hay config, aplicar el tema por defecto que ya está en la variable
                 sv_ttk.set_theme(self.theme_var.get())
@@ -597,7 +780,9 @@ class ConvertidorGUI:
         try:
             config = {
                 "last_project_path": self.project_path.get(),
-                "theme": self.theme_var.get()
+                "theme": self.theme_var.get(),
+                "exts": self.exts_var.get(),
+                "preset": self.preset_var.get(),
             }
             with open(self.CONFIG_FILE, "w") as f:
                 json.dump(config, f, indent=2)
