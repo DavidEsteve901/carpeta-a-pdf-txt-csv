@@ -38,6 +38,39 @@ IGNORE_PRESETS = {
         "node_modules, venv, .git, dist, build, *.lock, *.json, *.svg, *.png, *.jpg, *.pdf, *.zip, test, tests, docs, assets",
 }
 
+
+def parse_exts(spec: str) -> tuple[set[str], set[str]] | None:
+    """
+    Devuelve:
+      None                  -> convertir todo
+      (includes, excludes)  -> conjuntos normalizados de extensiones
+    Reglas:
+      - Inclusión:   .py,.md           (sin '!')
+      - Exclusión:   !pdf,!jpg         (con '!')
+      - Mixto:       .py,.md,!pdf      (incluye solo .py/.md y además excluye .pdf)
+      - Todo:        *                 (o vacío)
+    """
+    if not spec or spec.strip() in {"*", "todos", "TODOS"}:
+        return None
+
+    inc: set[str] = set()
+    exc: set[str] = set()
+    parts = [p.strip() for p in spec.split(",") if p.strip()]
+    for p in parts:
+        if p.startswith("!"):
+            ext = "." + p[1:].lstrip(".").lower()
+            exc.add(ext)
+        else:
+            ext = "." + p.lstrip(".").lower()
+            inc.add(ext)
+
+    if not inc and not exc:
+        return None
+    return (inc, exc)
+
+
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  SELECTOR DE ÁRBOL (CheckTreeDialog - Estable V5)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -261,18 +294,18 @@ class App:
     
     def __init__(self):
         self.root = TkinterDnD.Tk()
-        self.root.title("Convertidor Universal Pro - V6")
-        self.root.geometry("950x850")
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        
-        # Variables
-        self.v_path = StringVar()
-        self.v_out = StringVar(value="contexto")
-        self.v_theme = StringVar(value="dark")
-        self.v_ext_preset = StringVar(value="* (Todo)")
-        self.v_ext_manual = StringVar(value="*")
-        self.v_ign_preset = StringVar(value="Por defecto (General)")
-        self.v_ghost_structure = BooleanVar(value=True) # Nueva variable
+        self.root.title("Convertidor Universal Pro")
+        self.root.geometry("850x650")
+        self.root.minsize(700, 500)
+
+        # Crear todas las variables de estado ANTES de cualquier otra cosa.
+        self.project_path = StringVar()
+        self.output_name = StringVar(value="listado")
+        self.format_var = IntVar(value=1)
+        self.theme_var = tk.StringVar(value="dark")
+        self.selected_paths: set[Path] = set()
+        self.last_output_path: Path | None = None
+        self.log_queue = queue.Queue()
         
         self.sel_paths = set()
         self.q = queue.Queue()
@@ -300,51 +333,31 @@ class App:
         ttk.Checkbutton(f1, text="Dark", style="Switch.TCheckbutton", variable=self.v_theme, 
                        onvalue="dark", offvalue="light", command=self.set_theme).grid(row=0, column=3, padx=10)
 
-        # Settings
-        f2 = ttk.Frame(self.root, padding=(10,0))
-        f2.grid(row=1, sticky="nsew")
-        f2.columnconfigure(1, weight=1)
-        
-        # Left Panel
-        left = ttk.Frame(f2)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0,5))
-        
-        lf1 = ttk.LabelFrame(left, text="Salida", padding=5)
-        lf1.pack(fill="x")
-        ttk.Entry(lf1, textvariable=self.v_out).pack(fill="x")
-        
-        lf2 = ttk.LabelFrame(left, text="Selección Árbol", padding=5)
-        lf2.pack(fill="x", pady=5)
-        ttk.Button(lf2, text="Abrir Selector", command=self.open_tree).pack(fill="x")
-        self.lbl_tree = ttk.Label(lf2, text="(Todo)", foreground="gray")
-        self.lbl_tree.pack()
-        
-        # Checkbox "Estructura Fantasma"
-        ttk.Checkbutton(lf2, text="Incluir estructura de no seleccionados", 
-                       variable=self.v_ghost_structure).pack(fill="x", pady=(5,0))
-        ttk.Label(lf2, text="(Aparecen en índice, pero sin código)", font=("Segoe UI", 7, "italic")).pack()
+        settings_frame = ttk.Frame(self.root, padding=(10, 5))
+        settings_frame.grid(row=1, column=0, sticky="ew")
+        settings_frame.columnconfigure(0, weight=1)
 
-        # Right Panel
-        right = ttk.Frame(f2)
-        right.grid(row=0, column=1, sticky="nsew")
-        rf = ttk.LabelFrame(right, text="Filtros & Ignorados", padding=5)
-        rf.pack(fill="both", expand=True)
+        out_group = ttk.LabelFrame(settings_frame, text="Configuración de Salida", padding=10)
+        out_group.grid(row=0, column=0, sticky="ew")
+        out_group.columnconfigure(1, weight=1)
+
+        ttk.Label(out_group, text="Nombre de salida:").grid(row=0, column=0, sticky="w")
+        self.entry_output = ttk.Entry(out_group, textvariable=self.output_name)
+        self.entry_output.grid(row=0, column=1, padx=(5, 10), sticky="ew")
         
-        ttk.Label(rf, text="Extensiones:").pack(anchor="w")
-        cb = ttk.Combobox(rf, textvariable=self.v_ext_preset, values=[
-            "* (Todo)", ".py,.js,.ts,.html,.css", ".c,.cpp,.h", "!pdf,!jpg,!png", ".md,.txt"
-        ])
-        cb.pack(fill="x")
-        cb.bind("<<ComboboxSelected>>", lambda e: self.v_ext_manual.set(self.v_ext_preset.get().split(' (')[0]))
-        ttk.Entry(rf, textvariable=self.v_ext_manual).pack(fill="x", pady=2)
+        self.frm_fmt = ttk.Frame(out_group)
+        self.frm_fmt.grid(row=0, column=2)
+        ttk.Radiobutton(self.frm_fmt, text="PDF", variable=self.format_var, value=0).pack(side="left", padx=5)
+        ttk.Radiobutton(self.frm_fmt, text="TXT", variable=self.format_var, value=1).pack(side="left", padx=5)
+        ttk.Radiobutton(self.frm_fmt, text="CSV", variable=self.format_var, value=2).pack(side="left", padx=5)
         
-        ttk.Separator(rf).pack(fill="x", pady=5)
-        ttk.Label(rf, text="Ignorar (Desaparecen totalmente):", foreground="#e06c75").pack(anchor="w")
-        cb2 = ttk.Combobox(rf, textvariable=self.v_ign_preset, values=list(IGNORE_PRESETS.keys()))
-        cb2.pack(fill="x")
-        cb2.bind("<<ComboboxSelected>>", lambda e: self.set_ignore_txt(IGNORE_PRESETS.get(self.v_ign_preset.get())))
-        self.txt_ign = scrolledtext.ScrolledText(rf, height=6, font=("Consolas",9))
-        self.txt_ign.pack(fill="both", expand=True, pady=2)
+        sel_group = ttk.LabelFrame(settings_frame, text="Selección de Contenido", padding=10)
+        sel_group.grid(row=1, column=0, sticky="ew", pady=5)
+
+        self.btn_selector = ttk.Button(sel_group, text="Seleccionar archivos/carpetas...", command=self._open_selector)
+        self.btn_selector.pack(side="left")
+        self.lbl_sel = ttk.Label(sel_group, text="(Actualmente: todo)")
+        self.lbl_sel.pack(side="left", padx=8)
 
         # Actions
         f3 = ttk.Frame(self.root, padding=10)
@@ -365,38 +378,99 @@ class App:
         self.btn_opn = ttk.Button(btns, text="Abrir Carpeta", state="disabled", command=lambda: webbrowser.open(self.last_out.parent))
         self.btn_opn.pack(side="left")
 
-    # ──────────────── LOGIC ────────────────
-    def ask_dir(self):
-        d = filedialog.askdirectory()
-        if d: 
-            self.v_path.set(d)
-            self.sel_paths = set()
-            self.update_lbl()
-
-    def open_tree(self):
-        if not self.v_path.get(): return
-        dlg = CheckTreeDialog(self.root, Path(self.v_path.get()), self.sel_paths)
+    def _select_folder(self):
+        path = filedialog.askdirectory(title="Selecciona la carpeta del proyecto")
+        if path:
+            self.project_path.set(path)
+            self.selected_paths = set()
+            self._update_sel_label()
+            self._save_config()
+            
+    def _open_selector(self):
+        base_str = self.project_path.get()
+        if not base_str or not Path(base_str).is_dir():
+            messagebox.showerror("Error", "Debes seleccionar una carpeta válida primero.")
+            return
+        dlg = CheckTreeDialog(self.root, Path(base_str), self.selected_paths)
         self.root.wait_window(dlg)
         if dlg.result is not None:
             self.sel_paths = dlg.result
             self.update_lbl()
 
-    def update_lbl(self):
-        n = len(self.sel_paths)
-        self.lbl_tree.config(text=f"({n} seleccionados)" if n > 0 else "(Todo)")
+    def _update_sel_label(self):
+        if not self.selected_paths:
+            self.lbl_sel.configure(text="(Actualmente: todo)")
+        else:
+            n = len(self.selected_paths)
+            self.lbl_sel.configure(text=f"({n} elemento{'s' if n != 1 else ''} seleccionado{'s' if n != 1 else ''})")
 
-    def set_ignore_txt(self, t):
-        self.txt_ign.delete("1.0", "end")
-        self.txt_ign.insert("1.0", t)
-    def set_theme(self): sv_ttk.set_theme(self.v_theme.get())
+    def _handle_drop(self, event):
+        path_str = event.data.strip('{}')
+        path = Path(path_str)
+        if path.is_dir():
+            self.project_path.set(str(path))
+            self._save_config()
+            self._log(f"Carpeta '{path.name}' seleccionada por Drag & Drop.")
+        else:
+            messagebox.showwarning("Entrada no válida", "Por favor, arrastra y suelta una carpeta, no un archivo.")
+    
+    def _clear_log(self):
+        self.log.configure(state="normal")
+        self.log.delete('1.0', tk.END)
+        self.log.configure(state="disabled")
 
-    def log_msg(self, t):
-        self.log.config(state="normal")
-        self.log.insert("end", str(t)+"\n")
-        self.log.see("end")
-        self.log.config(state="disabled")
+    def _open_output_folder(self):
+        if self.last_output_path and self.last_output_path.parent.exists():
+            webbrowser.open(self.last_output_path.parent.resolve())
 
-    def loop_q(self):
+    def _run_conversion(self):
+        if not self.project_path.get():
+            messagebox.showerror("Error", "Debes seleccionar una carpeta de proyecto.")
+            return
+        self._toggle_controls(False)
+        self._clear_log()
+        self._log("Iniciando conversión...")
+        self.progress_bar["value"] = 0
+        self.last_output_path = None
+        self.btn_open_output.configure(state="disabled")
+        threading.Thread(target=self._convert, daemon=True).start()
+
+    def _convert(self):
+        try:
+            base = Path(self.project_path.get()).expanduser().resolve()
+            name = self.output_name.get().strip() or "listado"
+            fmt_idx = self.format_var.get()
+            fmt = ("pdf", "txt", "csv")[fmt_idx]
+            output_path = Path.cwd() / f"{name}.{fmt}"
+            self.last_output_path = output_path
+
+            self.log_queue.put(f"📂 Carpeta de origen: {base}")
+            self.log_queue.put(f"💾 Archivo de salida: {output_path}")
+            
+            arbol, files = scan_project(base, self.selected_paths or None, self.log_queue)
+
+            if not files:
+                self.log_queue.put(("final_message", "showwarning", "No se encontraron archivos para convertir."))
+                return
+
+            if fmt == "txt":
+                export_txt(output_path, arbol, files, self.log_queue)
+            else:
+                self.log_queue.put(f"AVISO: La exportación a {fmt.upper()} no está implementada.")
+                self.log_queue.put("-> Generando un archivo TXT de respaldo.")
+                export_txt(output_path.with_suffix(".txt"), arbol, files, self.log_queue)
+
+            self.log_queue.put(('progress', 100))
+            self.log_queue.put("─" * 60)
+            self.log_queue.put("✅ ¡Éxito! Conversión completada.")
+            self.log_queue.put(("final_message", "showinfo", f"Archivo generado:\n{output_path}"))
+
+        except Exception as exc:
+            self.log_queue.put(("final_message", "showerror", f"❌ ERROR INESPERADO: {exc}"))
+        finally:
+            self.log_queue.put("END_PROCESS")
+
+    def _process_log_queue(self):
         try:
             while True:
                 m = self.q.get_nowait()
@@ -424,29 +498,22 @@ class App:
 
     def worker(self):
         try:
-            base = Path(self.v_path.get())
-            ign_txt = self.txt_ign.get("1.0", "end").replace("\n", ",")
-            ignores = [x.strip() for x in ign_txt.split(",") if x.strip()]
-            ghosts = self.v_ghost_structure.get()
-            
-            tree, files = scan_process(base, self.sel_paths, ignores, ghosts, self.q)
-            
-            out = Path(__file__).parent / (self.v_out.get().strip() + ".txt")
-            self.last_out = out
-            
-            exts = None
-            raw_ext = self.v_ext_manual.get().strip()
-            if raw_ext and raw_ext not in ["*", "todos"]:
-                inc, exc = set(), set()
-                for p in raw_ext.split(","):
-                    if p.startswith("!"): exc.add("."+p[1:].lstrip("."))
-                    else: inc.add("."+p.lstrip("."))
-                if inc or exc: exts = (inc, exc)
-
-            export_data(out, tree, files, exts, self.q)
-            self.q.put("DONE")
-            self.q.put(("msg", "info", f"✅ Proceso terminado.\nArchivo generado: {out.name}"))
-            
+            if self.CONFIG_FILE.exists():
+                with open(self.CONFIG_FILE, "r") as f:
+                    config = json.load(f)
+                    
+                    if last_path := config.get("last_project_path"):
+                        if Path(last_path).exists():
+                            self.project_path.set(last_path)
+                            self._log(f"Cargada la última carpeta usada: {last_path}")
+                    
+                    theme = config.get("theme", "dark")
+                    self.theme_var.set(theme)
+                    sv_ttk.set_theme(theme)
+                    self._log(f"Tema '{theme}' cargado.")
+            else:
+                # Si no hay config, aplicar el tema por defecto que ya está en la variable
+                sv_ttk.set_theme(self.theme_var.get())
         except Exception as e:
             self.q.put(f"❌ Error: {e}")
             self.q.put(("msg", "err", str(e)))
@@ -466,23 +533,20 @@ class App:
 
     def load_cfg(self):
         try:
-            if self.CFG.exists():
-                d = json.loads(self.CFG.read_text())
-                self.v_path.set(d.get("path",""))
-                self.v_theme.set(d.get("theme","dark"))
-                self.v_ext_manual.set(d.get("exts","*"))
-                self.v_ign_preset.set(d.get("ign_pre","Por defecto"))
-                self.set_ignore_txt(d.get("ign_txt", IGNORE_PRESETS["Por defecto (General)"]))
-                self.v_ghost_structure.set(d.get("ghost", True))
-                self.set_theme()
-            else:
-                self.set_theme()
-                self.set_ignore_txt(IGNORE_PRESETS["Por defecto (General)"])
-        except: pass
+            config = {
+                "last_project_path": self.project_path.get(),
+                "theme": self.theme_var.get()
+            }
+            with open(self.CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            self._log(f"No se pudo guardar la configuración: {e}")
+            
+    def run(self):
+        self.root.mainloop()
 
-    def on_close(self):
-        self.save_cfg()
-        self.root.destroy()
-
+# ─────────────────────────────────────────────────────────────────────────────
+#  ARRANQUE
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     App().root.mainloop()
