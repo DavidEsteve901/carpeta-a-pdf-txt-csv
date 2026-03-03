@@ -1,0 +1,8 @@
+# Ignorar todo por defecto
+/*
+
+# No ignorar estos archivos específicos
+!README.md
+!requirements.txt
+!convertidor_gui_pro.py
+!.gitignore
